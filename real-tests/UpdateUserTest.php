@@ -1,0 +1,108 @@
+<?php
+
+namespace Tests\Feature\Api\User;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Testing\Fluent\AssertableJson;
+use Tests\TestCase;
+
+
+class UpdateUserTest extends TestCase
+{
+    use RefreshDatabase;
+    private User $user;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        /** @var User $user */
+        $user = User::factory()->create();
+        $this->user = $user;
+    }
+
+    public function testUpdateUser(): void
+    {
+        $username = 'new.username';
+        $email = 'newEmail@example.com';
+        $bio = 'New bio information.';
+
+        $this->actingAs($this->user)
+            ->putJson('/api/user', ['user' => ['username' => $username]])
+            ->assertOk();
+        $this->actingAs($this->user)
+            ->putJson('/api/user', ['user' => ['email' => $email]])
+            ->assertOk();
+        $response = $this->actingAs($this->user)
+            ->putJson('/api/user', ['user' => ['bio' => $bio]]);
+
+        $response->assertOk()
+            ->assertJson(
+                fn (AssertableJson $json) => $json->has(
+                    'user',
+                    fn (AssertableJson $item) => $item
+                        ->whereAll([
+                            'username' => $username,
+                            'email' => $email,
+                            'bio' => $bio,
+                        ])->etc()
+                )
+            );
+    }
+
+    public function testUpdateUserValidationUnique(): void
+    {
+        /** @var User $anotherUser */
+        $anotherUser = User::factory()->create();
+
+        $response = $this->actingAs($this->user)
+            ->putJson('/api/user', [
+                'user' => [
+                    'username' => $anotherUser->username,
+                    'email' => $anotherUser->email,
+                ],
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertInvalid(['username', 'email']);
+    }
+
+    public function testUpdateUserWithoutAuth(): void
+    {
+        $this->putJson('/api/user')
+            ->assertUnauthorized();
+    }
+
+    public function testUpdateUserAvatar(): void
+    {
+        Storage::fake('avatars');
+
+        $avatar = UploadedFile::fake()->image('avatar.jpg');
+
+        $response = $this->actingAs($this->user)
+            ->post('/api/user/updateavatar', ['avatar' => $avatar]);
+
+        $response->assertOk()
+            ->assertJson(
+                fn (AssertableJson $json) => $json->has(
+                    'user',
+                    fn (AssertableJson $item) => $item
+                        ->whereAll([
+                            'avatar' => 'avatars/' . $avatar->hashName(),
+                        ])->etc()
+                )
+            );
+        Storage::disk('public')->assertExists('avatars/' . $avatar->hashName());
+    }
+
+    public function testUpdateUserAvatarWithoutAuth(): void
+    {
+        $response = $this->post('/api/user/updateavatar')
+        ->assertUnauthorized();
+        $response->dump();
+        $response->dumpHeaders();
+    }
+}
